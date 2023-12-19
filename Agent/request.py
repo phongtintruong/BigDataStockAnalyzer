@@ -8,7 +8,12 @@ df = pd.read_csv('TWTR.csv')
 close = df['Close'].tolist()
 volume = df['Volume'].tolist()
 
+output = []
+
 for i in range(200):
     data = json.dumps([close[i], volume[i]])
     requested = requests.get('http://localhost:8005/trade?data=' + data).json()
-    print(requested)
+    output.append(requested)
+
+with open('output.json', 'w') as outfile:
+    json.dump(output, outfile)
