@@ -2,11 +2,16 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json
 from pyspark.sql.types import StructType, StringType, ArrayType, DoubleType
 
+LOCAL_IP_ADDRESS = 192.168.79.111
+
 # Create a Spark session
 spark = SparkSession \
         .builder \
         .appName("Stock Analyzer") \
         .master("spark://192.168.79.106:7077") \
+        .config("spark.driver.host", LOCAL_IP_ADDRESS) \
+        .config("spark.driver.port", "42069") \
+        .config("spark.driver.bindAddress", "0.0.0.0") \
         .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,com.datastax.spark:spark-cassandra-connector-assembly_2.12:3.4.1") \
         .config("spark.sql.streaming.forceDeleteTempCheckpointLocation", True) \
         .getOrCreate()
