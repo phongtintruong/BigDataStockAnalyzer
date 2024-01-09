@@ -4,36 +4,42 @@ from pyspark.sql.functions import col, udf, month, dayofweek, avg, log, year, fr
 from pyspark.sql.streaming import StreamingQueryListener
 from datetime import datetime
 
+# Set the Kafka server address
+bootstrap_servers = '192.168.79.101:9092'
 LOCAL_IP = "127.0.0.1"
-SPARK_IP = "127.0.0.1"
-KAFKA_IP = "127.0.0.1"
-HDFS_URL = "hdfs://localhost:9000"
+SPARK_IP = "192.168.79.101"
+KAFKA_IP = "192.168.79.101"
+CASSANDRA_IP = "192.168.79.101"
+
+# Set the Kafka topic
+topic = 'stock'
+
 # Spark configuration
 spark_config = {
         "spark.jars.packages": \
         	"org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,com.datastax.spark:spark-cassandra-connector-assembly_2.12:3.4.1",
-        "spark.driver.host": LOCAL_IP,
-        "spark.driver.port": "42069",
-#        "spark.driver.bindAddress": "0.0.0.0",
+        "spark.driver.host": 'localhost',
+        "spark.driver.port": '42069',
+       "spark.driver.bindAddress": "0.0.0.0",
         "spark.executor.memory": "2g",
         "spark.driver.memory": "4g",
         "spark.python.worker.memory": "2g",
-        "spark.sql.streaming.checkpointLocation": HDFS_URL + "/spark",
+        "spark.sql.streaming.checkpointLocation": "/tmp/stock/checkpoint",
         "spark.sql.streaming.forceDeleteTempCheckpointLocation": "true"
 }
 # Kafka In/Out parameters
 kafka_source_params = {
     "kafka.bootstrap.servers": KAFKA_IP + ":9092",
-    "subscribe": "demo-stock-in",
+    "subscribe": "stock",
     "startingOffsets": "earliest"
 }
 
 spark = SparkSession \
-        .builder \
-        .appName("Stock Analyzer") \
-        .config(map=spark_config) \
-        .getOrCreate()
-#         .master("spark://" + SPARK_IP + ":7077") \
+		.builder \
+		.master("spark://" + SPARK_IP + ":7077") \
+		.appName("Stock Analyzer") \
+		.config(map=spark_config) \
+		.getOrCreate()
 
 kafka_stream_df = spark \
     .readStream \
@@ -41,6 +47,14 @@ kafka_stream_df = spark \
     .options(**kafka_source_params) \
     .load()
 kafka_stream_df = kafka_stream_df.selectExpr("CAST(value AS STRING)")
+
+print('query0 start')
+query0 = kafka_stream_df.writeStream \
+	.outputMode("update") \
+	.format('console') \
+	.start()
+print('query0 stop')
+query0.awaitTermination()
 
 # https://www.databricks.com/blog/2022/05/27/how-to-monitor-streaming-queries-in-pyspark.html
 class QueryMonitor(StreamingQueryListener):
@@ -119,165 +133,167 @@ def weekly_f(df, epoch_id):
 	df.collect() # weird bug goes away
 	df.show(100)
 
+print('query1 start')
 query1 = df_weekly_vol.writeStream \
 	.outputMode("complete") \
-	.foreachBatch(weekly_f) \
-#	.start()
+	.format('console') \
+	.start()
+print('query1 stop')
 
-## Biểu đồ giá của các ticker
-df_price_fluctuations = data_spark.select('ticker', 'p', 'ts') \
-	.groupBy(window('ts', '2 minute', '1 minute'), 'ticker') \
-	.agg(expr('min_by(p, ts)').alias('p_prev'), \
-	     expr('max_by(p, ts)').alias('p_curr')) \
-	.withColumn('p_delta', col('p_curr') - col('p_prev')) \
-	.select('ticker', 'window.*', 'p_delta') \
-
-def price_fluctuations_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query2 = df_price_fluctuations.writeStream \
-	.outputMode("append") \
-	.foreachBatch(price_fluctuations_f) \
-#	.start()
-
-## Mỗi ticker đều xem được giá cao nhất và thấp nhất trong 1 ngày hoặc 1 tuần
-df_price_minmax = data_spark.select('ticker', 'p', 'ts') \
-	.groupBy(window('ts', '1 week', '6 hours'), 'ticker') \
-	.agg(expr('min(p)').alias('p_min'), \
-	     expr('max(p)').alias('p_max')) \
-	.select('ticker', 'window.*', 'p_min', 'p_max') \
-
-def price_minmax_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query3 = df_price_minmax.writeStream \
-	.outputMode("append") \
-	.foreachBatch(price_minmax_f) \
-#	.start()
-
-## Giá hiện tại của ticker
-df_price_current = data_spark.select('ticker', 'p', 'ts') \
-	.groupBy('ticker').agg(max_by('p', 'ts').alias('p_now')) \
-	.select('ticker', 'p_now') \
-
-def price_current_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query4 = df_price_current.writeStream \
-	.outputMode("complete") \
-	.foreachBatch(price_current_f) \
-#	.start()
-
-# Chênh lệch so với khởi điểm
-df_price_diff = data_spark.select('ticker', 'p', 'ts') \
-	.groupBy(window('ts', '1 week', '6 hours'), 'ticker') \
-	.agg(expr('min_by(p, ts)').alias('p_start'), \
-	     expr('max_by(p, ts)').alias('p_end')) \
-	.withColumn('p_diff', col('p_end') - col('p_start')) \
-	.select('ticker', 'p_diff') \
-
-def price_diff_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query5 = df_price_diff.writeStream \
-	.outputMode("append") \
-	.foreachBatch(price_diff_f) \
-#	.start()
-
-## Biên độ ngày biên độ tuần
-df_price_amplitude = data_spark.select('ticker', 'p', 'ts') \
-	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
-	.agg(expr('min(p)').alias('p_min'), \
-	     expr('max(p)').alias('p_max')) \
-	.withColumn('p_ampl', col('p_max') - col('p_min')) \
-	.select('ticker', 'p_ampl') \
-
-def price_amplitude_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query6 = df_price_amplitude.writeStream \
-	.outputMode("append") \
-	.foreachBatch(price_amplitude_f) \
-#	.start()
-
-## Bảng xếp loại theo biên độ
-df_fluctuation_rank = data_spark.select('ticker', 'p', 'ts') \
-	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
-	.agg(expr('min(p)').alias('p_min'), \
-	     expr('max(p)').alias('p_max')) \
-	.withColumn('p_ampl', col('p_max') - col('p_min')) \
-	.select('ticker', 'p_ampl') \
-	.orderBy('p_ampl', ascending=False) \
-
-def fluctuation_rank_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query7 = df_fluctuation_rank.writeStream \
-	.outputMode("complete") \
-	.foreachBatch(fluctuation_rank_f) \
-#	.start()
-
-## Các cổ phiếu hoạt động mạnh nhất theo khối lượng giao dịch
-## query1
-## Giá đóng cửa hôm trước, mở cửa hôm nay
-## ?
-## Khối lượng
-## ?
-## Khối lượng trung bình tuần
-df_weekly_avg = data_spark.select('ticker', 'v', 'ts') \
-	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
-	.agg(expr('avg(v)').alias('v')) \
-	.select('ticker', 'v')
-
-def weekly_avg_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query8 = df_weekly_avg.writeStream \
-	.outputMode("append") \
-	.foreachBatch(weekly_avg_f) \
-#	.start()
-
-## Số lệnh mua lệnh bán trong tuần
-df_weekly_bid = data_spark.select('ticker', 'ts', 'v') \
-	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
-	.agg(count(when(col('v') > 0, 1)).alias('num')) \
-
-def weekly_bid_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query9 = df_weekly_bid.writeStream \
-	.outputMode("append") \
-	.foreachBatch(weekly_bid_f) \
-#	.start()
-## Đồ thị MA
-df_moving_avg = data_spark.select('ticker', 'ts', 'p') \
-	.groupBy(window('ts', '6 hours', '1 hour'), 'ticker') \
-	.agg(avg('p').alias('avg')) \
-
-def moving_avg_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-query10 = df_moving_avg.writeStream \
-	.outputMode("append") \
-	.foreachBatch(moving_avg_f) \
+# ## Biểu đồ giá của các ticker
+# df_price_fluctuations = data_spark.select('ticker', 'p', 'ts') \
+# 	.groupBy(window('ts', '2 minute', '1 minute'), 'ticker') \
+# 	.agg(expr('min_by(p, ts)').alias('p_prev'), \
+# 	     expr('max_by(p, ts)').alias('p_curr')) \
+# 	.withColumn('p_delta', col('p_curr') - col('p_prev')) \
+# 	.select('ticker', 'window.*', 'p_delta') \
+#
+# def price_fluctuations_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query2 = df_price_fluctuations.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(price_fluctuations_f) \
+# #	.start()
+#
+# ## Mỗi ticker đều xem được giá cao nhất và thấp nhất trong 1 ngày hoặc 1 tuần
+# df_price_minmax = data_spark.select('ticker', 'p', 'ts') \
+# 	.groupBy(window('ts', '1 week', '6 hours'), 'ticker') \
+# 	.agg(expr('min(p)').alias('p_min'), \
+# 	     expr('max(p)').alias('p_max')) \
+# 	.select('ticker', 'window.*', 'p_min', 'p_max') \
+#
+# def price_minmax_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query3 = df_price_minmax.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(price_minmax_f) \
+# #	.start()
+#
+# ## Giá hiện tại của ticker
+# df_price_current = data_spark.select('ticker', 'p', 'ts') \
+# 	.groupBy('ticker').agg(max_by('p', 'ts').alias('p_now')) \
+# 	.select('ticker', 'p_now') \
+#
+# def price_current_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query4 = df_price_current.writeStream \
+# 	.outputMode("complete") \
+# 	.foreachBatch(price_current_f) \
+# #	.start()
+#
+# # Chênh lệch so với khởi điểm
+# df_price_diff = data_spark.select('ticker', 'p', 'ts') \
+# 	.groupBy(window('ts', '1 week', '6 hours'), 'ticker') \
+# 	.agg(expr('min_by(p, ts)').alias('p_start'), \
+# 	     expr('max_by(p, ts)').alias('p_end')) \
+# 	.withColumn('p_diff', col('p_end') - col('p_start')) \
+# 	.select('ticker', 'p_diff') \
+#
+# def price_diff_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query5 = df_price_diff.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(price_diff_f) \
+# #	.start()
+#
+# ## Biên độ ngày biên độ tuần
+# df_price_amplitude = data_spark.select('ticker', 'p', 'ts') \
+# 	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
+# 	.agg(expr('min(p)').alias('p_min'), \
+# 	     expr('max(p)').alias('p_max')) \
+# 	.withColumn('p_ampl', col('p_max') - col('p_min')) \
+# 	.select('ticker', 'p_ampl') \
+#
+# def price_amplitude_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query6 = df_price_amplitude.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(price_amplitude_f) \
+# #	.start()
+#
+# ## Bảng xếp loại theo biên độ
+# df_fluctuation_rank = data_spark.select('ticker', 'p', 'ts') \
+# 	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
+# 	.agg(expr('min(p)').alias('p_min'), \
+# 	     expr('max(p)').alias('p_max')) \
+# 	.withColumn('p_ampl', col('p_max') - col('p_min')) \
+# 	.select('ticker', 'p_ampl') \
+# 	.orderBy('p_ampl', ascending=False) \
+#
+# def fluctuation_rank_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query7 = df_fluctuation_rank.writeStream \
+# 	.outputMode("complete") \
+# 	.foreachBatch(fluctuation_rank_f) \
+# #	.start()
+#
+# ## Các cổ phiếu hoạt động mạnh nhất theo khối lượng giao dịch
+# ## query1
+# ## Giá đóng cửa hôm trước, mở cửa hôm nay
+# ## ?
+# ## Khối lượng
+# ## ?
+# ## Khối lượng trung bình tuần
+# df_weekly_avg = data_spark.select('ticker', 'v', 'ts') \
+# 	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
+# 	.agg(expr('avg(v)').alias('v')) \
+# 	.select('ticker', 'v')
+#
+# def weekly_avg_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query8 = df_weekly_avg.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(weekly_avg_f) \
+# #	.start()
+#
+# ## Số lệnh mua lệnh bán trong tuần
+# df_weekly_bid = data_spark.select('ticker', 'ts', 'v') \
+# 	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
+# 	.agg(count(when(col('v') > 0, 1)).alias('num')) \
+#
+# def weekly_bid_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query9 = df_weekly_bid.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(weekly_bid_f) \
+# #	.start()
+# ## Đồ thị MA
+# df_moving_avg = data_spark.select('ticker', 'ts', 'p') \
+# 	.groupBy(window('ts', '6 hours', '1 hour'), 'ticker') \
+# 	.agg(avg('p').alias('avg')) \
+#
+# def moving_avg_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+#
+# query10 = df_moving_avg.writeStream \
+# 	.outputMode("append") \
+# 	.foreachBatch(moving_avg_f) \
 #	.start()
 ## Điểm giới hạn
 # ??
