@@ -4,11 +4,10 @@ from pyspark.sql.functions import col, udf, month, dayofweek, avg, log, year, fr
 from pyspark.sql.streaming import StreamingQueryListener
 from datetime import datetime
 
-# Set the Kafka server address
 bootstrap_servers = '192.168.79.101:9092'
 LOCAL_IP = "127.0.0.1"
 SPARK_IP = "192.168.79.101"
-KAFKA_IP = "192.168.79.101"
+KAFKA_IP = "kafka"
 CASSANDRA_IP = "192.168.79.101"
 
 # Set the Kafka topic
