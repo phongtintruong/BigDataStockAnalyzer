@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StringType, ArrayType, DoubleType, DateType, TimestampType
-from pyspark.sql.functions import col, udf, month, dayofweek, avg, log, year, from_json, explode, count, window, lag, expr, max_by, min_by, arrays_zip
+from pyspark.sql.functions import col, udf, month, dayofweek, avg, log, year, from_json, explode, count, window, lag, expr, max_by, min_by, arrays_zip, when
 from pyspark.sql.streaming import StreamingQueryListener
 from datetime import datetime
 
@@ -253,9 +253,8 @@ query8 = df_weekly_avg.writeStream \
 
 ## Số lệnh mua lệnh bán trong tuần
 df_weekly_bid = data_spark.select('ticker', 'ts', 'v') \
-	.filter(data_spark.v > 0) \
 	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
-	.agg(count('v').alias('num')) \
+	.agg(count(when(col('v') > 0, 1)).alias('num')) \
 
 def weekly_bid_f(df, epoch_id):
 	print(epoch_id, df)
