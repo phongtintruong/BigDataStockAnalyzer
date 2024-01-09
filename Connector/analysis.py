@@ -18,12 +18,12 @@ topic = 'stock'
 spark_config = {
         "spark.jars.packages": \
         	"org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,com.datastax.spark:spark-cassandra-connector-assembly_2.12:3.4.1",
-        "spark.driver.host": 'localhost',
-        "spark.driver.port": '42069',
-       "spark.driver.bindAddress": "0.0.0.0",
-        "spark.executor.memory": "2g",
-        "spark.driver.memory": "4g",
-        "spark.python.worker.memory": "2g",
+#        "spark.driver.host": 'localhost',
+#        "spark.driver.port": '42069',
+#       "spark.driver.bindAddress": "0.0.0.0",
+#        "spark.executor.memory": "2g",
+#        "spark.driver.memory": "4g",
+#        "spark.python.worker.memory": "2g",
         "spark.sql.streaming.checkpointLocation": "/tmp/stock/checkpoint",
         "spark.sql.streaming.forceDeleteTempCheckpointLocation": "true"
 }
