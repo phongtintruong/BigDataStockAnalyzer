@@ -5,68 +5,57 @@ from pyspark.sql.streaming import StreamingQueryListener
 from datetime import datetime
 
 # Set the Kafka server address
-bootstrap_servers = '192.168.79.101:9092'
+bootstrap_servers = 'localhost:29092'
 LOCAL_IP = "127.0.0.1"
 SPARK_IP = "192.168.79.101"
-KAFKA_IP = "192.168.79.101"
-CASSANDRA_IP = "192.168.79.101"
+CASSANDRA_IP = "localhost"
 
 # Set the Kafka topic
 topic = 'stock'
 
-# Spark configuration
-spark_config = {
-        "spark.jars.packages": \
-        	"org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,com.datastax.spark:spark-cassandra-connector-assembly_2.12:3.4.1",
-#        "spark.driver.host": 'localhost',
-#        "spark.driver.port": '42069',
-#       "spark.driver.bindAddress": "0.0.0.0",
-#        "spark.executor.memory": "2g",
-#        "spark.driver.memory": "4g",
-#        "spark.python.worker.memory": "2g",
-        "spark.sql.streaming.checkpointLocation": "/tmp/stock/checkpoint",
-        "spark.sql.streaming.forceDeleteTempCheckpointLocation": "true"
-}
 # Kafka In/Out parameters
 kafka_source_params = {
-    "kafka.bootstrap.servers": KAFKA_IP + ":9092",
-    "subscribe": "stock",
-    "startingOffsets": "earliest"
+	"kafka.bootstrap.servers": "kafka-1:9092",
+	"subscribe": topic,
+	"startingOffsets": "earliest"
 }
 
 spark = SparkSession \
 		.builder \
-		.master("spark://" + SPARK_IP + ":7077") \
 		.appName("Stock Analyzer") \
-		.config(map=spark_config) \
+		.config("spark.cassandra.connection.host", "cassandra") \
+		.config("spark.cassandra.connection.port", "9042") \
+		.config("spark.cassandra.auth.username", "cassandra")\
+		.config("spark.cassandra.auth.password", "cassandra")\
+		.config("spark.sql.streaming.checkpointLocation", "/tmp/stock/checkpoint") \
 		.getOrCreate()
-sleep(10000)
+# .master("spark://" + SPARK_IP + ":7077") \
+
 kafka_stream_df = spark \
-    .readStream \
-    .format("kafka") \
-    .options(**kafka_source_params) \
-    .load()
+	.readStream \
+	.format("kafka") \
+	.options(**kafka_source_params) \
+	.load()
+
 kafka_stream_df = kafka_stream_df.selectExpr("CAST(value AS STRING)")
 
-print('query0 start')
-query0 = kafka_stream_df.writeStream \
-	.outputMode("update") \
-	.format('console') \
-	.start()
-print('query0 stop')
-query0.awaitTermination()
 
 # https://www.databricks.com/blog/2022/05/27/how-to-monitor-streaming-queries-in-pyspark.html
 class QueryMonitor(StreamingQueryListener):
 	def onQueryStarted(self, event):
 		print("[LOG] Starting Query:")
+
 	def onQueryIdle(self, event):
 		print("[LOG] Waiting for new data...")
+
 	def onQueryProgress(self, event):
 		print(event)
+
 	def onQueryTerminated(self, event):
 		print("[LOG] Query stopped.")
 		pass
+
+
 spark.streams.addListener(QueryMonitor())
 # Input JSON schema:
 # {
@@ -75,70 +64,107 @@ spark.streams.addListener(QueryMonitor())
 #  bidAskLog: [ { ... } ... ]    <---          t 
 # }
 
-price_schema = ArrayType(     \
-     StructType()             \
-    .add('p',   DoubleType()) \
-    .add('cp',  DoubleType()) \
-    .add('rcp', DoubleType()) \
-    .add('v',   DoubleType()) \
-    .add('dt',  StringType()))
-    
-comm_schema = ArrayType(      \
-     StructType()             \
-    .add('ap1', DoubleType()) \
-    .add('bp1', DoubleType()) \
-    .add('av1', DoubleType()) \
-    .add('bv1', DoubleType()) \
-    .add('t',   StringType()))
+price_schema = ArrayType(
+	StructType()
+	.add('p',   DoubleType())
+	.add('cp',  DoubleType())
+	.add('rcp', DoubleType())
+	.add('v',   DoubleType())
+	.add('dt',  StringType())
+)
+
+comm_schema = ArrayType(
+	StructType()
+	.add('ap1', DoubleType())
+	.add('bp1', DoubleType())
+	.add('av1', DoubleType())
+	.add('bv1', DoubleType())
+	.add('t',   StringType())
+)
 
 detail_schema = StructType() \
-    .add('ticker', StringType()) \
-    .add('data', price_schema) \
-    .add('bidAskLog', comm_schema)
+	.add('ticker', StringType()) \
+	.add('data', price_schema) \
+	.add('bidAskLog', comm_schema)
 
 kafka_stream_df = kafka_stream_df.select(from_json(col='value', schema=detail_schema).alias('data')).select('data.*')
 
-@udf(returnType=StringType())
-def timesplit(x):
-	if x is None: return ''
-	return x.split(' ')[1]
+print('query0 start')
+# query1 = df_weekly_vol \
+# 	.writeStream \
+# 	.format("org.apache.spark.sql.cassandra") \
+# 	.option("checkpointLocation", '/tmp/check_point/') \
+# 	.options(table="weekly_vol", keyspace="stock_demo") \
+# 	.outputMode('complete') \
+# 	.start()
 
-@udf(returnType=TimestampType())
-def parse_ts(x):
-	if x is None: return datetime.fromtimestamp(0)
-	ts = datetime.strptime(x, '%d/%m %H:%M')
-	if (ts.month == 12): ts = ts.replace(year=2023)
-	else:                ts = ts.replace(year=2024)
-	return ts
-
-data_spark = kafka_stream_df.select('ticker',  \
-	explode(arrays_zip('data', 'bidAskLog'))) \
-	.select('ticker', 'col.data.*', 'col.bidAskLog.*') \
-	.withColumn('ts', parse_ts('dt')) \
-	.withWatermark('ts', '1 day') \
-	.select('ticker', 'ts', 'p', 'cp', 'rcp', 'v', 'ap1', 'bp1', 'av1', 'bv1')
-
-print("[LOG] Data schema:")
-data_spark.printSchema()
-
-## Ticker đang có biến động nhiều nhất
-df_weekly_vol = data_spark.select('ticker', 'v', 'ts') \
-	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
-	.agg({'v':'sum'}).withColumnRenamed('sum(v)', 'v') \
-	.select('ticker', 'v') \
-	.orderBy('v', ascending=False) \
-
-def weekly_f(df, epoch_id):
-	print(epoch_id, df)
-	df.collect() # weird bug goes away
-	df.show(100)
-
-print('query1 start')
-query1 = df_weekly_vol.writeStream \
-	.outputMode("complete") \
-	.format('console') \
+query0 = kafka_stream_df \
+	.writeStream \
+	.format("console") \
+	.outputMode('append') \
 	.start()
-print('query1 stop')
+print('query0 stop')
+
+# @udf(returnType=StringType())
+# def timesplit(x):
+# 	if x is None:
+# 		return ''
+# 	return x.split(' ')[1]
+
+
+# @udf(returnType=TimestampType())
+# def parse_ts(x):
+# 	if x is None:
+# 		return datetime.fromtimestamp(0)
+# 	ts = datetime.strptime(x, '%d/%m %H:%M')
+
+# 	if ts.month == 12:
+# 		ts = ts.replace(year=2023)
+# 	else:
+# 		ts = ts.replace(year=2024)
+
+# 	return ts
+
+
+# data_spark = kafka_stream_df.select('ticker',
+# 	explode(arrays_zip('data', 'bidAskLog'))) \
+# 	.select('ticker', 'col.data.*', 'col.bidAskLog.*') \
+# 	.withColumn('ts', parse_ts('dt')) \
+# 	.withWatermark('ts', '1 day') \
+# 	.select('ticker', 'ts', 'p', 'cp', 'rcp', 'v', 'ap1', 'bp1', 'av1', 'bv1')
+
+# print("[LOG] Data schema:")
+# data_spark.printSchema()
+
+# # Ticker đang có biến động nhiều nhất
+# df_weekly_vol = data_spark.select('ticker', 'v', 'ts') \
+# 	.groupBy(window('ts', '1 week', '1 day'), 'ticker') \
+# 	.agg({'v': 'sum'}).withColumnRenamed('sum(v)', 'v') \
+# 	.select('ticker', 'v') \
+# 	.orderBy('v', ascending=False)
+
+
+# def weekly_f(df, epoch_id):
+# 	print(epoch_id, df)
+# 	df.collect() # weird bug goes away
+# 	df.show(100)
+
+
+# print('query1 start')
+# query1 = df_weekly_vol \
+# 	.writeStream \
+# 	.format("org.apache.spark.sql.cassandra") \
+# 	.option("checkpointLocation", '/tmp/check_point/') \
+# 	.options(table="weekly_vol", keyspace="stock_demo") \
+# 	.outputMode('complete') \
+# 	.start()
+
+# query1 = df_weekly_vol \
+# 	.writeStream \
+# 	.format("console") \
+# 	.outputMode('complete') \
+# 	.start()
+# print('query1 stop')
 
 # ## Biểu đồ giá của các ticker
 # df_price_fluctuations = data_spark.select('ticker', 'p', 'ts') \
@@ -299,7 +325,9 @@ print('query1 stop')
 # ??
 ## Các cổ phiếu % tăng, giảm cao nhất
 
-#query1.awaitTermination()
+print("Wait for termination muahaha!!!")
+query0.awaitTermination()
+# query1.awaitTermination()
 #query2.awaitTermination()
 #query3.awaitTermination()
 #query4.awaitTermination()
