@@ -1,11 +1,11 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StringType, ArrayType, DoubleType, DateType, TimestampType
+from pyspark.sql.types import StructType, StringType, ArrayType, DoubleType, DateType, TimestampType, StructField
 from pyspark.sql.functions import col, udf, month, dayofweek, avg, log, year, from_json, explode, count, window, lag, expr, max_by, min_by, arrays_zip, when
 from pyspark.sql.streaming import StreamingQueryListener
 from datetime import datetime
 
 # Set the Kafka server address
-bootstrap_servers = 'localhost:29092'
+bootstrap_servers = 'kafka-1:9092'
 LOCAL_IP = "127.0.0.1"
 SPARK_IP = "192.168.79.101"
 CASSANDRA_IP = "localhost"
@@ -15,9 +15,9 @@ topic = 'stock'
 
 # Kafka In/Out parameters
 kafka_source_params = {
-	"kafka.bootstrap.servers": "kafka-1:9092",
+	"kafka.bootstrap.servers": bootstrap_servers,
 	"subscribe": topic,
-	"startingOffsets": "earliest"
+	"startingOffsets": "latest"
 }
 
 spark = SparkSession \
@@ -87,7 +87,12 @@ detail_schema = StructType() \
 	.add('data', price_schema) \
 	.add('bidAskLog', comm_schema)
 
-kafka_stream_df = kafka_stream_df.select(from_json(col='value', schema=detail_schema).alias('data')).select('data.*')
+# kafka_stream_df = kafka_stream_df.select('value')
+
+kafka_stream_df = kafka_stream_df.select(from_json(col='value').alias('data')).select('data.*')
+
+print("Streaming Schema is:")
+kafka_stream_df.printSchema()
 
 print('query0 start')
 # query1 = df_weekly_vol \
