@@ -21,9 +21,9 @@ for root, dirs, files in os.walk(directory):
             file_path = os.path.join(root, filename)
             # Produce messages to Kafka topic
             with open(file_path, 'r', encoding='utf-8') as json_file:
-                data = json.load(json_file)
+                data = json_file.read()
                 print('Data is:', str(data))
-                producer.produce(topic=topic, value=str(data))
+                producer.produce(topic=topic, value=data)
                 producer.flush()
                 print('Sent {}'.format(index))
             time.sleep(1)
