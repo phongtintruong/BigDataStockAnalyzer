@@ -17,7 +17,7 @@ topic = 'stock'
 kafka_source_params = {
 	"kafka.bootstrap.servers": bootstrap_servers,
 	"subscribe": topic,
-	"startingOffsets": "latest"
+	"startingOffsets": "earliest"
 }
 
 spark = SparkSession \
@@ -144,12 +144,17 @@ def weekly_f(df, epoch_id):
 # 	.outputMode('complete') \
 # 	.start()
 
-query1 = df_weekly_vol \
-	.writeStream \
-	.format("org.apache.spark.sql.cassandra") \
-	.options(table="weekly_vol", keyspace="stock_demo") \
-	.outputMode('append') \
+query1 = df_weekly_vol.writeStream \
+	.format("console") \
+	.outputMode("append") \
 	.start()
+
+# query1 = df_weekly_vol \
+# 	.writeStream \
+# 	.format("org.apache.spark.sql.cassandra") \
+# 	.options(table="weekly_vol", keyspace="stock_demo") \
+# 	.outputMode('append') \
+# 	.start()
 #
 # # Biểu đồ giá của các ticker
 # df_price_fluctuations = data_spark.select('ticker', 'p', 'ts') \

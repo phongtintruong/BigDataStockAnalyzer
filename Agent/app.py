@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 import numpy as np
 import pickle
 import json
@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 window_size = 20
 skip = 1
-layer_size = 500
+layer_size = 1000
 output_size = 3
 
 
@@ -340,22 +340,7 @@ class Agent:
         return states_buy, states_sell, total_gains, invest
 
 
-with open('model.pkl', 'rb') as fopen:
-    model = pickle.load(fopen)
-
-df = pd.read_csv('TWTR.csv')
-real_trend = df['Close'].tolist()
-parameters = [df['Close'].tolist(), df['Volume'].tolist()]
-minmax = MinMaxScaler(feature_range=(100, 200)).fit(np.array(parameters).T)
-scaled_parameters = minmax.transform(np.array(parameters).T).T.tolist()
-initial_money = np.max(parameters[0]) * 2
-
-agent = Agent(model=model,
-              timeseries=scaled_parameters,
-              skip=skip,
-              initial_money=initial_money,
-              real_trend=real_trend,
-              minmax=minmax)
+agent = None
 
 
 @app.route('/', methods=['GET'])
@@ -363,31 +348,64 @@ def hello():
     return jsonify({'status': 'OK'})
 
 
+@app.route('/setticker', methods=['GET'])
+def setticker():
+    global agent
+
+    args = request.args.get('args')
+
+    with open('model.pkl', 'rb') as fopen:
+        model = pickle.load(fopen)
+
+    df_path = f'D:\Git_desktop\BigDataStockAnalyzer\Agent\PriceHistory\{args}'
+
+    with open(df_path, 'r') as file:
+        json_lines = file.readlines()
+
+        data_list = [json.loads(line) for line in json_lines]
+        df = pd.DataFrame(data_list)
+
+    real_trend = df['GiaDongCua'].tolist()
+    parameters = [df['GiaDongCua'].tolist(), df['KhoiLuongKhopLenh'].tolist()]
+    minmax = MinMaxScaler(feature_range=(100, 200)).fit(np.array(parameters).T)
+    scaled_parameters = minmax.transform(np.array(parameters).T).T.tolist()
+    initial_money = np.max(parameters[0]) * 2
+
+    g.agent = Agent(model=model,
+                  timeseries=scaled_parameters,
+                  skip=skip,
+                  initial_money=initial_money,
+                  real_trend=real_trend,
+                  minmax=minmax)
+
+    return jsonify({'ticker': args})
+
+
 @app.route('/inventory', methods=['GET'])
 def inventory():
-    return jsonify(agent._inventory)
+    return jsonify(g.agent._inventory)
 
 
 @app.route('/queue', methods=['GET'])
 def queue():
-    return jsonify(agent._queue)
+    return jsonify(g.agent._queue)
 
 
 @app.route('/balance', methods=['GET'])
 def balance():
-    return jsonify(agent._capital)
+    return jsonify(g.agent._capital)
 
 
 @app.route('/trade', methods=['GET'])
 def trade():
     data = json.loads(request.args.get('data'))
-    return jsonify(agent.trade(data))
+    return jsonify(g.agent.trade(data))
 
 
 @app.route('/reset', methods=['GET'])
 def reset():
     money = json.loads(request.args.get('money'))
-    agent.reset_capital(money)
+    g.agent.reset_capital(money)
     return jsonify(True)
 
 

@@ -13,7 +13,7 @@ producer_config = {'bootstrap.servers': bootstrap_servers}
 producer = Producer(producer_config)
 
 # data_path = '..\\sample_crawler_data\\v1-sample.json'
-directory = 'D:/learningProgrammingLanguages/Python/BigDataStockAnalyzer/2024-01-05-18-27-41'
+directory = 'D:/Git_desktop/BigDataStockAnalyzer/2024-01-05-18-27-41'
 
 for root, dirs, files in os.walk(directory):
     for index, filename in enumerate(files):
